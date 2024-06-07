@@ -1,0 +1,1 @@
+print("It's time to work")

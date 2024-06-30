@@ -1,6 +1,10 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox, simpledialog
 from math import cos, sin, sqrt, radians
+from PIL import ImageGrab
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+import os
 
 class FillHexagon:
     def __init__(self, parent, x, y, length, color, tags):
@@ -37,12 +41,12 @@ class FillHexagon:
 class FrequencyReuseGame(tk.Tk):
     def __init__(self):
         tk.Tk.__init__(self)
-        self.title("Outil de Répartition de la Fréquence et de Calcul de la Capacité")
+        self.title("Outil de Répartition de Fréquences et de Calcul de la Capacité")
         self.rowconfigure(0, minsize=800, weight=1)
         self.columnconfigure(0, minsize=150, weight=1)
         self.columnconfigure(3, minsize=800, weight=1)
         
-        self.hex_frame = tk.Canvas(self, width=300, height=300, bg="#ffffff")
+        self.hex_frame = tk.Canvas(self, width=600, height=600, bg="#ffffff")
         self.hexagons = []
         self.selected_hexagons = {}
         
@@ -76,8 +80,11 @@ class FrequencyReuseGame(tk.Tk):
         self.reset_btn.grid(row=4, column=0, sticky="n", padx=5, pady=5, columnspan=2)
         self.end_btn.grid(row=5, column=0, sticky="n", padx=5, pady=5, columnspan=2)
         
-        self.res_lbl = tk.Label(master=menu, text="")
-        self.res_lbl.grid(row=6, column=0, columnspan=2)
+        self.capacity_lbl = tk.Label(master=menu, text="Capacité :")
+        self.capacity_lbl.grid(row=6, column=0, columnspan=2)
+        
+        self.res_lbl = tk.Label(master=menu, text="", font=("Helvetica", 14, "bold"))
+        self.res_lbl.grid(row=7, column=0, columnspan=2)
         
         sep = ttk.Separator(orient=tk.VERTICAL)
         
@@ -89,7 +96,9 @@ class FrequencyReuseGame(tk.Tk):
 
         # Bouton pour ouvrir la fenêtre de calcul de capacité
         self.capacity_btn = tk.Button(menu, text="Calculer la Capacité", width=20, command=self.open_capacity_window)
-        self.capacity_btn.grid(row=7, column=0, columnspan=2, pady=10)
+        self.capacity_btn.grid(row=8, column=0, columnspan=2, pady=10)
+        self.generate_report_btn = tk.Button(menu, text="Générer un rapport PDF", width=20, command=self.generate_pdf_report, state="disabled")
+        self.generate_report_btn.grid(row=9, column=0, columnspan=2, pady=10)
 
     def initGrid(self, cols, rows, size, debug):
         for c in range(cols):
@@ -128,6 +137,7 @@ class FrequencyReuseGame(tk.Tk):
         self.j_entry["state"] = "normal"
         self.click_count = 0
         self.selected_hexagons = {}
+        self.generate_report_btn["state"] = "disabled"  # Désactive le bouton de génération de rapport
 
     def calculate_n(self):
         i = int(self.i_entry.get()) if self.i_entry.get() != "" else 0
@@ -151,6 +161,7 @@ class FrequencyReuseGame(tk.Tk):
         self.j_entry["state"] = "normal"
         self.find_cells()
         self.hex_frame.unbind("<Button-1>")
+        self.generate_report_btn["state"] = "active"  # Active le bouton de génération de rapport
 
     def find_cells(self):
         i = int(self.i_entry.get()) if self.i_entry.get() != "" else 0
@@ -168,38 +179,76 @@ class FrequencyReuseGame(tk.Tk):
                 self.hex_frame.itemconfigure(cell, fill=color)
 
     def open_capacity_window(self):
-        # Ouvre une nouvelle fenêtre pour le calcul de capacité
         self.capacity_window = tk.Toplevel(self)
-        self.capacity_window.title("Calcul de la Capacité")
+        self.capacity_window.title("Calcul de Capacité")
+        self.capacity_window.geometry("300x150")
         
-        tk.Label(self.capacity_window, text="Surface Totale :").grid(row=0, column=0, padx=10, pady=5)
-        self.total_area_entry = tk.Entry(self.capacity_window)
+        tk.Label(self.capacity_window, text="Surface Totale (km²) :").grid(row=0, column=0, padx=10, pady=5)
+        self.total_area_entry = tk.Entry(self.capacity_window, width=10)
         self.total_area_entry.grid(row=0, column=1, padx=10, pady=5)
         
-        tk.Label(self.capacity_window, text="Surface d'une Cellule :").grid(row=1, column=0, padx=10, pady=5)
-        self.cell_area_entry = tk.Entry(self.capacity_window)
+        tk.Label(self.capacity_window, text="Surface d'une Cellule (km²) :").grid(row=1, column=0, padx=10, pady=5)
+        self.cell_area_entry = tk.Entry(self.capacity_window, width=10)
         self.cell_area_entry.grid(row=1, column=1, padx=10, pady=5)
         
         tk.Label(self.capacity_window, text="Nombre de Canaux :").grid(row=2, column=0, padx=10, pady=5)
-        self.channels_entry = tk.Entry(self.capacity_window)
-        self.channels_entry.grid(row=2, column=1, padx=10, pady=5)
+        self.num_channels_entry = tk.Entry(self.capacity_window, width=10)
+        self.num_channels_entry.grid(row=2, column=1, padx=10, pady=5)
         
-        self.calculate_btn = tk.Button(self.capacity_window, text="Calculer", command=self.calculate_capacity)
-        self.calculate_btn.grid(row=3, column=0, columnspan=2, pady=10)
+        tk.Button(self.capacity_window, text="Calculer", command=self.show_capacity_result).grid(row=3, column=0, columnspan=2, pady=10)
+
+    def show_capacity_result(self):
+        try:
+            self.total_area = float(self.total_area_entry.get())
+            self.cell_area = float(self.cell_area_entry.get())
+            self.num_channels = int(self.num_channels_entry.get())
+            
+            capacity = (self.total_area / self.cell_area) * (self.num_channels / self.n)  # Calcul fictif de la capacité
+
+            # Affiche le résultat de la capacité sous le bouton Capacité
+            self.res_lbl["text"] = f"{capacity:.2f}"
+            
+            # Active le bouton de génération de rapport PDF
+            self.generate_report_btn["state"] = "active"
+
+            # Ferme la fenêtre de calcul de capacité
+            self.capacity_window.destroy()
+
+        except ValueError:
+            messagebox.showerror("Erreur", "Veuillez entrer des valeurs numériques valides.")
+
+    def generate_pdf_report(self):
+        if self.res_lbl["text"] == "":
+            messagebox.showerror("Erreur", "Veuillez d'abord calculer la capacité.")
+            return
         
-        self.capacity_lbl = tk.Label(self.capacity_window, text="")
-        self.capacity_lbl.grid(row=4, column=0, columnspan=2)
+        # Demande à l'utilisateur le nom et l'emplacement du fichier PDF
+        filename = simpledialog.askstring("Enregistrer Rapport PDF", "Entrez le nom du fichier PDF:")
+        if filename:
+            filename += ".pdf" if not filename.endswith(".pdf") else ""
+            c = canvas.Canvas(filename, pagesize=A4)
+            c.drawString(30, 750, "Rapport de Capacité")
+            c.drawString(30, 730, f"Surface Totale : {self.total_area} km²")
+            c.drawString(30, 710, f"Surface d'une Cellule : {self.cell_area} km²")
+            c.drawString(30, 690, f"Nombre de Canaux : {self.num_channels}")
+            c.drawString(30, 670, f"Capacité Calculée : {self.res_lbl['text']}")
 
-    def calculate_capacity(self):
-        # Lire les valeurs des entrées
-        total_area = float(self.total_area_entry.get())
-        cell_area = float(self.cell_area_entry.get())
-        channels = int(self.channels_entry.get())
+            # Capture d'écran de la fenêtre principale
+            x0 = self.winfo_rootx()
+            y0 = self.winfo_rooty()
+            x1 = x0 + self.winfo_width()
+            y1 = y0 + self.winfo_height()
+            screenshot = ImageGrab.grab(bbox=(x0, y0, x1, y1))
+            screenshot_path = "screenshot.png"
+            screenshot.save(screenshot_path)
 
-        # Calculer la capacité
-        capacity = (total_area / cell_area) * (channels / self.n)
-        self.capacity_lbl["text"] = f"Capacité: {capacity:.2f}"
+            # Insérer l'image de capture d'écran dans le rapport
+            c.drawInlineImage(screenshot_path, 30, 450, width=200, height=150)
+            
+            c.save()
+            os.remove(screenshot_path)  # Supprimer le fichier de capture d'écran après utilisation
+            messagebox.showinfo("Rapport PDF", f"Le rapport a été enregistré sous le nom : {filename}")
 
 if __name__ == "__main__":
-    window = FrequencyReuseGame()
-    window.mainloop()
+    app = FrequencyReuseGame()
+    app.mainloop()
